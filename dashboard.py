@@ -1,4 +1,4 @@
-
+##
 
 import streamlit as st
 import yfinance as yf
@@ -637,6 +637,7 @@ if st.button("Generate Signals"):
     if not df_sim.empty:
         st.subheader(f"Signals — {sim_mode}")
         st.dataframe(df_sim.style.apply(highlight, axis=1), use_container_width=True)
+
 
 
 
