@@ -71,7 +71,7 @@ def generate_signal(ticker, cfg, sim_mode="Normal"):
     start = "2023-01-01"
 
     prices = yf.download([ticker], start=start, end=end,
-                         progress=False, auto_adjust=True)["Close"].dropna()
+                         progress=False, auto_adjust=False)["Close"].dropna()
     if ticker not in prices.columns:
         return {"Symbol": ticker, "Error": "Data not available"}
 
@@ -99,7 +99,7 @@ def generate_signal(ticker, cfg, sim_mode="Normal"):
 
     if use_atr_stop:
         ohlc = yf.download(ticker, start=start, end=end,
-                           progress=False, auto_adjust=True)[["High","Low","Close"]]
+                           progress=False, auto_adjust=False)[["High","Low","Close"]]
         hl = ohlc["High"] - ohlc["Low"]
         hp = (ohlc["High"] - ohlc["Close"].shift()).abs()
         lp = (ohlc["Low"] - ohlc["Close"].shift()).abs()
@@ -225,7 +225,7 @@ def layered_entry_signal(ticker, cfg):
     start = "2023-01-01"
 
     prices = yf.download([ticker], start=start, end=end,
-                         progress=False, auto_adjust=True)["Close"].dropna()
+                         progress=False, auto_adjust=False)["Close"].dropna()
     if ticker not in prices.columns:
         return {"Symbol": ticker, "Error": "Data not available"}
 
@@ -274,7 +274,7 @@ def layered_entry_signal(ticker, cfg):
     atr_mult = cfg["atr_mult"]
     if use_atr_stop:
         ohlc = yf.download(ticker, start=start, end=end,
-                           progress=False, auto_adjust=True)[["High","Low","Close"]]
+                           progress=False, auto_adjust=False)[["High","Low","Close"]]
         hl = ohlc["High"] - ohlc["Low"]
         hp = (ohlc["High"] - ohlc["Close"].shift()).abs()
         lp = (ohlc["Low"] - ohlc["Close"].shift()).abs()
@@ -365,7 +365,7 @@ def filter_entry_signal(ticker, cfg):
     start = "2023-01-01"
 
     # Download price data
-    prices = yf.download([ticker], start=start, end=end, progress=False, auto_adjust=True)["Close"].dropna()
+    prices = yf.download([ticker], start=start, end=end, progress=False, auto_adjust=False)["Close"].dropna()
     if ticker not in prices.columns:
         return {"Symbol": ticker, "Error": "Data not available"}
 
@@ -436,7 +436,7 @@ def filter_entry_signal(ticker, cfg):
     price["VolRatio"] = vol_short / (vol_long + 1e-12)
 
     if use_atr_stop:
-        ohlc = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)[["High", "Low", "Close"]]
+        ohlc = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=False)[["High", "Low", "Close"]]
         hl = ohlc["High"] - ohlc["Low"]
         hp = (ohlc["High"] - ohlc["Close"].shift()).abs()
         lp = (ohlc["Low"] - ohlc["Close"].shift()).abs()
@@ -637,6 +637,7 @@ if st.button("Generate Signals"):
     if not df_sim.empty:
         st.subheader(f"Signals — {sim_mode}")
         st.dataframe(df_sim.style.apply(highlight, axis=1), use_container_width=True)
+
 
 
 
