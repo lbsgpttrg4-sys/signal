@@ -117,8 +117,8 @@ def generate_signal(ticker, cfg, sim_mode="Normal"):
     boom_cfg = {
         "rsi_period": rsi_period,                # reuse from main config
         "sma_rsi_reclaim_sma": 50,
-        "sma_rsi_min_slope_win": 20,
-        "sma_rsi_min_slope": -0.02,
+        "sma_rsi_min_slope_win": 15,
+        "sma_rsi_min_slope": -0.04,
         "sma_rsi_rsi_limit": 70,
         "sma_rsi_above_sma_pct": 0.70,
     }
@@ -256,8 +256,8 @@ def layered_entry_signal(ticker, cfg):
     boom_cfg = {
         "rsi_period": rsi_period,                # reuse from main config
         "sma_rsi_reclaim_sma": 50,
-        "sma_rsi_min_slope_win": 20,
-        "sma_rsi_min_slope": -0.02,
+        "sma_rsi_min_slope_win": 15,
+        "sma_rsi_min_slope": -0.04,
         "sma_rsi_rsi_limit": 70,
         "sma_rsi_above_sma_pct": 0.70,
     }
@@ -449,8 +449,8 @@ def filter_entry_signal(ticker, cfg):
     boom_cfg = {
         "rsi_period": rsi_period,                # reuse from main config
         "sma_rsi_reclaim_sma": 50,
-        "sma_rsi_min_slope_win": 20,
-        "sma_rsi_min_slope": -0.02,
+        "sma_rsi_min_slope_win": 15,
+        "sma_rsi_min_slope": -0.04,
         "sma_rsi_rsi_limit": 70,
         "sma_rsi_above_sma_pct": 0.70,
     }
@@ -637,6 +637,7 @@ if st.button("Generate Signals"):
     if not df_sim.empty:
         st.subheader(f"Signals — {sim_mode}")
         st.dataframe(df_sim.style.apply(highlight, axis=1), use_container_width=True)
+
 
 
 
