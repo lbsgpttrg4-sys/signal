@@ -304,7 +304,8 @@ def layered_entry_signal(ticker, cfg):
     else:
         if pd.notna(rsi) and pd.notna(sma100) and pd.notna(sma50) and pd.notna(sma30):
             # Entry
-            if (rsi < 30) and (p > sma100):
+            # if (rsi < 30) and (p > sma100):
+            if (rsi < 40) and (p > sma30):
                 buy_signal = True
             elif (p < sma100) and (p > sma30) and (rsi > 30 and rsi < 50):
                 if p > sma30 * 1.01 and p > sma50:
@@ -831,6 +832,7 @@ if st.button("Generate Signals"):
     if not df_sim.empty:
         st.subheader(f"Signals — {sim_mode}")
         st.dataframe(df_sim.style.apply(highlight, axis=1), use_container_width=True)
+
 
 
 
