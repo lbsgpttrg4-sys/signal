@@ -68,7 +68,7 @@ def predict_boom_sma_rsi1(price: pd.DataFrame, cfg: dict) -> pd.Series:
 def generate_signal(ticker, cfg, sim_mode="Normal"):
     time.sleep(1)
     end = datetime.today().strftime("%Y-%m-%d")
-    start = "2023-01-01"
+    start = "2024-01-01"
 
     prices = yf.download([ticker], start=start, end=end,
                          progress=False, auto_adjust=True)["Close"].dropna()
@@ -222,7 +222,7 @@ def generate_signal(ticker, cfg, sim_mode="Normal"):
 def layered_entry_signal(ticker, cfg):
     time.sleep(1)
     end = datetime.today().strftime("%Y-%m-%d")
-    start = "2023-01-01"
+    start = "2024-01-01"
 
     prices = yf.download([ticker], start=start, end=end,
                          progress=False, auto_adjust=True)["Close"].dropna()
@@ -564,7 +564,7 @@ def layered_entry_signal(ticker, cfg):
 def filter_entry_signal(ticker, cfg):
     time.sleep(1)  # avoid too rapid API calls
     end = datetime.today().strftime("%Y-%m-%d")
-    start = "2023-01-01"
+    start = "2024-01-01"
 
     # Download price data
     prices = yf.download([ticker], start=start, end=end, progress=False, auto_adjust=True)["Close"].dropna()
@@ -832,6 +832,7 @@ if st.button("Generate Signals"):
     if not df_sim.empty:
         st.subheader(f"Signals — {sim_mode}")
         st.dataframe(df_sim.style.apply(highlight, axis=1), use_container_width=True)
+
 
 
 
