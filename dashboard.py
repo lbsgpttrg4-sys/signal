@@ -360,207 +360,6 @@ def layered_entry_signal(ticker, cfg):
 
 
 
-# def filter_entry_signal(ticker, cfg):
-#     time.sleep(1)  # avoid too rapid API calls
-#     end = datetime.today().strftime("%Y-%m-%d")
-#     start = "2023-01-01"
-
-#     # Download price data
-#     prices = yf.download([ticker], start=start, end=end, progress=False, auto_adjust=True)["Close"].dropna()
-#     if ticker not in prices.columns:
-#         return {"Symbol": ticker, "Error": "Data not available"}
-
-#     price = prices[ticker].to_frame(name="Price")
-
-#     # === Config variables from sidebar ===
-#     sma_window = cfg["sma_window"]
-#     rsi_period = cfg["rsi_period"]
-#     rsi_overbought = cfg["rsi_overbought"]
-#     rsi_overbought_strongtrend = 80
-#     rsi_oversold = cfg["rsi_oversold"]
-#     strongtrend_sma_gap = 0.05
-#     use_atr_stop = cfg["use_atr_stop"]
-#     atr_period = cfg["atr_period"]
-#     atr_mult = cfg["atr_mult"]
-#     boom_threshold = cfg["boom_threshold"]
-
-#     # =====================
-#     # Helper functions
-#     # =====================
-#     def compute_rsi(series, period=14):
-#         delta = series.diff()
-#         gain = delta.where(delta > 0, 0.0)
-#         loss = -delta.where(delta < 0, 0.0)
-#         avg_gain = gain.rolling(period, min_periods=1).mean()
-#         avg_loss = loss.rolling(period, min_periods=1).mean()
-#         rs = avg_gain / (avg_loss + 1e-12)
-#         rsi = 100 - (100 / (1 + rs))
-#         return rsi
-
-#     def zlema(series, span):
-#         lag = int(max(1, (span - 1) // 2))
-#         de_lagged = series + (series - series.shift(lag))
-#         return de_lagged.ewm(span=span, adjust=False).mean()
-
-#     def kama(series, er_window=10, fast=2, slow=30):
-#         change = (series - series.shift(er_window)).abs()
-#         volatility = series.diff().abs().rolling(er_window).sum()
-#         er = change / (volatility + 1e-12)
-#         fast_sc = 2 / (fast + 1)
-#         slow_sc = 2 / (slow + 1)
-#         sc = (er * (fast_sc - slow_sc) + slow_sc) ** 2
-#         kama_series = pd.Series(index=series.index, dtype=float)
-#         if len(series) < er_window + 2:
-#             return series.ewm(span=slow, adjust=False).mean()
-#         kama_series.iloc[er_window] = series.iloc[:er_window + 1].mean()
-#         for i in range(er_window + 1, len(series)):
-#             prev = kama_series.iloc[i - 1]
-#             kama_series.iloc[i] = prev + sc.iloc[i] * (series.iloc[i] - prev)
-#         return kama_series.ffill().bfill()
-
-#     # =====================
-#     # Indicators
-#     # =====================
-#     price["RSI"] = compute_rsi(price["Price"], rsi_period)
-#     price["EMA50"] = price["Price"].ewm(span=50, adjust=False).mean()
-#     price["EMA100"] = price["Price"].ewm(span=100, adjust=False).mean()
-#     price["KAMA"] = kama(price["Price"], er_window=10, fast=2, slow=max(20, sma_window // 8))
-#     price["ZLEMA20"] = zlema(price["Price"], 20)
-
-#     price["HP"] = price["Price"] - price["KAMA"]
-#     hp_std = price["HP"].rolling(50, min_periods=10).std()
-#     price["HP_Z"] = price["HP"] / hp_std  # no nan handling
-
-#     returns = price["Price"].pct_change()
-#     vol_short = returns.rolling(10, min_periods=5).std()
-#     vol_long = returns.rolling(50, min_periods=20).std()
-#     price["VolRatio"] = vol_short / (vol_long + 1e-12)
-
-#     if use_atr_stop:
-#         ohlc = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)[["High", "Low", "Close"]]
-#         hl = ohlc["High"] - ohlc["Low"]
-#         hp = (ohlc["High"] - ohlc["Close"].shift()).abs()
-#         lp = (ohlc["Low"] - ohlc["Close"].shift()).abs()
-#         tr = pd.concat([hl, hp, lp], axis=1).max(axis=1)
-#         price["ATR"] = tr.rolling(atr_period, min_periods=1).mean()
-
-#     # =====================
-#     # Boom detection
-#     # =====================
-#     boom_cfg = {
-#         "rsi_period": rsi_period,                # reuse from main config
-#         "sma_rsi_reclaim_sma": 50,
-#         "sma_rsi_min_slope_win": 15,
-#         "sma_rsi_min_slope": -0.04,
-#         "sma_rsi_rsi_limit": 70,
-#         "sma_rsi_above_sma_pct": 0.70,
-#     }
-
-#     boom_quarters = predict_boom_sma_rsi1(price, boom_cfg)
-#     boom_quarters_set = {(q.year, q.quarter) for q, val in boom_quarters.items() if val}
-#     price["IsBoom"] = [(d.year, d.quarter) in boom_quarters_set for d in price.index]
-
-
-#     # =====================
-#     # Latest bar
-#     # =====================
-#     latest = price.iloc[-1]
-#     live_price = yf.Ticker(ticker).info.get("currentPrice")
-#     p = live_price if live_price else latest["Price"]
-#     rsi = latest["RSI"]
-#     ema50, ema100, kama_, z20, hpz, volr, boom = (
-#         latest["EMA50"], latest["EMA100"], latest["KAMA"],
-#         latest["ZLEMA20"], latest["HP_Z"], latest["VolRatio"], latest["IsBoom"]
-#     )
-
-#     vol_trend_on = volr < 0.9  # simple initial guess
-#     CONF_ENTER = 0.6
-#     HPZ_PENALTY, HPZ_SEVERE = 1.5, 3.0
-#     VR_ENTER, VR_EXIT = 0.9, 1.2
-#     RSI_MID_LOW, RSI_MID_HIGH = 45, 60
-
-#     buy_signal = False
-#     sell_signal = False
-#     trailing_stop = None
-#     in_position = True  # assume currently holding for exit logic
-
-#     # =====================
-#     # Core Logic
-#     # =====================
-#     if boom:
-#         buy_signal = rsi < 90
-#         sell_signal = not buy_signal
-#     else:
-#         # Volatility regime
-#         if vol_trend_on:
-#             vol_trend_on = volr <= VR_EXIT
-#         else:
-#             vol_trend_on = volr <= VR_ENTER
-
-#         # Confidence scoring
-#         trend_align = 1.0 if (ema50 > ema100 > kama_) else 0.0
-#         dist_norm = np.clip((p - kama_) / (0.05 * kama_), -1.0, 1.0)
-#         rsi_mid = 1.0 if (RSI_MID_LOW <= rsi <= RSI_MID_HIGH) else 0.0
-#         rsi_reset = 1.0 if (rsi < rsi_oversold) else 0.0
-#         vshape_turn = 1.0 if (z20 > ema50 and rsi >= 40) else 0.0
-#         vol_inv = np.clip((1.5 - volr), 0.0, 1.0)
-
-#         conf = 0.30 * trend_align + 0.20 * dist_norm + 0.20 * vol_inv + 0.15 * rsi_mid + 0.15 * rsi_reset
-#         conf += 0.15 * vshape_turn
-#         conf = float(np.clip(conf, 0.0, 1.0))
-#         if abs(hpz) > HPZ_PENALTY:
-#             conf *= 0.75
-
-#         # Entry
-#         if vol_trend_on and conf >= CONF_ENTER:
-#             buy_signal = True
-
-#         # Exit
-#         overbought_level = rsi_overbought_strongtrend if p > kama_ * (1 + strongtrend_sma_gap) else rsi_overbought
-#         severe_noise = abs(hpz) > HPZ_SEVERE
-#         regime_weak = (not vol_trend_on) and (p < ema100)
-#         if in_position and (rsi > overbought_level or p < ema50 or severe_noise or regime_weak):
-#             sell_signal = True
-
-#         # ATR stop
-#         if use_atr_stop and "ATR" in latest and latest["ATR"] is not None:
-#             if trailing_stop is None:
-#                 trailing_stop = p - atr_mult * latest["ATR"]
-#             else:
-#                 trailing_stop = max(trailing_stop, p - atr_mult * latest["ATR"])
-#             if p < trailing_stop:
-#                 sell_signal = True
-
-#     # =====================
-#     # Output
-#     # =====================
-#     signal = "HOLD"
-#     reason = ""
-#     if buy_signal:
-#         signal = "BUY"
-#         reason = "Filter Buy Signal"
-#     elif sell_signal:
-#         signal = "SELL"
-#         reason = "Filter Sell Signal"
-
-#     return {
-#         "Symbol": ticker,
-#         "Date": latest.name.strftime("%Y-%m-%d"),
-#         "Price": round(p, 2),
-#         "RSI": round(rsi, 2) if pd.notna(rsi) else None,
-#         "EMA50": round(ema50, 2),
-#         "EMA100": round(ema100, 2),
-#         "KAMA": round(kama_, 2),
-#         "ZLEMA20": round(z20, 2),
-#         "HP_Z": round(hpz, 2),
-#         "VolRatio": round(volr, 2),
-#         "ATR": round(latest.get("ATR", 0), 2) if use_atr_stop else None,
-#         "Signal": signal,
-#         "Reason": reason
-#     }
-
-
-
 def filter_entry_signal(ticker, cfg):
     time.sleep(1)  # avoid too rapid API calls
     end = datetime.today().strftime("%Y-%m-%d")
@@ -573,17 +372,17 @@ def filter_entry_signal(ticker, cfg):
 
     price = prices[ticker].to_frame(name="Price")
 
-    # === Config variables ===
+    # === Config variables from sidebar ===
     sma_window = cfg["sma_window"]
     rsi_period = cfg["rsi_period"]
     rsi_overbought = cfg["rsi_overbought"]
+    rsi_overbought_strongtrend = 80
     rsi_oversold = cfg["rsi_oversold"]
     strongtrend_sma_gap = 0.05
     use_atr_stop = cfg["use_atr_stop"]
     atr_period = cfg["atr_period"]
     atr_mult = cfg["atr_mult"]
     boom_threshold = cfg["boom_threshold"]
-    confirm_bars = cfg.get("confirm_bars", 2)
 
     # =====================
     # Helper functions
@@ -630,103 +429,107 @@ def filter_entry_signal(ticker, cfg):
 
     price["HP"] = price["Price"] - price["KAMA"]
     hp_std = price["HP"].rolling(50, min_periods=10).std()
-    price["HP_Z"] = price["HP"] / hp_std
+    price["HP_Z"] = price["HP"] / hp_std  # no nan handling
 
-    # ATR
+    returns = price["Price"].pct_change()
+    vol_short = returns.rolling(10, min_periods=5).std()
+    vol_long = returns.rolling(50, min_periods=20).std()
+    price["VolRatio"] = vol_short / (vol_long + 1e-12)
+
     if use_atr_stop:
-        ohlc = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)[["High","Low","Close"]]
+        ohlc = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)[["High", "Low", "Close"]]
         hl = ohlc["High"] - ohlc["Low"]
         hp = (ohlc["High"] - ohlc["Close"].shift()).abs()
         lp = (ohlc["Low"] - ohlc["Close"].shift()).abs()
         tr = pd.concat([hl, hp, lp], axis=1).max(axis=1)
         price["ATR"] = tr.rolling(atr_period, min_periods=1).mean()
 
+    # =====================
     # Boom detection
+    # =====================
     boom_cfg = {
-        "rsi_period": rsi_period,
+        "rsi_period": rsi_period,                # reuse from main config
         "sma_rsi_reclaim_sma": 50,
         "sma_rsi_min_slope_win": 15,
         "sma_rsi_min_slope": -0.04,
         "sma_rsi_rsi_limit": 70,
-        "sma_rsi_above_sma_pct": 0.70
+        "sma_rsi_above_sma_pct": 0.70,
     }
+
     boom_quarters = predict_boom_sma_rsi1(price, boom_cfg)
     boom_quarters_set = {(q.year, q.quarter) for q, val in boom_quarters.items() if val}
-    price["IsBoom"] = [(d.year,d.quarter) in boom_quarters_set for d in price.index]
+    price["IsBoom"] = [(d.year, d.quarter) in boom_quarters_set for d in price.index]
+
 
     # =====================
-    # Core logic with confirmation bars
+    # Latest bar
     # =====================
     latest = price.iloc[-1]
     live_price = yf.Ticker(ticker).info.get("currentPrice")
     p = live_price if live_price else latest["Price"]
     rsi = latest["RSI"]
-    ema50, ema100, kama_, z20, hpz, boom = (
-        latest["EMA50"], latest["EMA100"], latest["KAMA"], latest["ZLEMA20"], latest["HP_Z"], latest["IsBoom"]
+    ema50, ema100, kama_, z20, hpz, volr, boom = (
+        latest["EMA50"], latest["EMA100"], latest["KAMA"],
+        latest["ZLEMA20"], latest["HP_Z"], latest["VolRatio"], latest["IsBoom"]
     )
 
-    VR_ENTER, VR_EXIT = 0.9, 1.2
+    vol_trend_on = volr < 0.9  # simple initial guess
+    CONF_ENTER = 0.6
     HPZ_PENALTY, HPZ_SEVERE = 1.5, 3.0
+    VR_ENTER, VR_EXIT = 0.9, 1.2
     RSI_MID_LOW, RSI_MID_HIGH = 45, 60
-    CONF_ENTER = 0.60
 
     buy_signal = False
     sell_signal = False
     trailing_stop = None
-    in_position = True  # assume holding for exit logic
+    in_position = True  # assume currently holding for exit logic
 
-    # Simplified VolRatio
-    volr = 1.0
-    vol_trend_on = volr < 0.9
-    entry_counter = 0
-    exit_counter = 0
-
+    # =====================
+    # Core Logic
+    # =====================
     if boom:
-        if rsi < 90:
-            entry_counter += 1
-            exit_counter = 0
-            if entry_counter >= confirm_bars:
-                buy_signal = True
-        else:
-            exit_counter += 1
-            entry_counter = 0
-            if exit_counter >= confirm_bars:
-                sell_signal = True
+        buy_signal = rsi < 90
+        sell_signal = not buy_signal
     else:
+        # Volatility regime
+        if vol_trend_on:
+            vol_trend_on = volr <= VR_EXIT
+        else:
+            vol_trend_on = volr <= VR_ENTER
+
+        # Confidence scoring
         trend_align = 1.0 if (ema50 > ema100 > kama_) else 0.0
-        dist_norm = np.clip((p - kama_)/(0.05*kama_), -1.0, 1.0)
+        dist_norm = np.clip((p - kama_) / (0.05 * kama_), -1.0, 1.0)
         rsi_mid = 1.0 if (RSI_MID_LOW <= rsi <= RSI_MID_HIGH) else 0.0
         rsi_reset = 1.0 if (rsi < rsi_oversold) else 0.0
         vshape_turn = 1.0 if (z20 > ema50 and rsi >= 40) else 0.0
         vol_inv = np.clip((1.5 - volr), 0.0, 1.0)
-        conf = 0.30*trend_align + 0.20*dist_norm + 0.20*vol_inv + 0.15*rsi_mid + 0.15*rsi_reset + 0.15*vshape_turn
-        conf = float(np.clip(conf,0.0,1.0))
+
+        conf = 0.30 * trend_align + 0.20 * dist_norm + 0.20 * vol_inv + 0.15 * rsi_mid + 0.15 * rsi_reset
+        conf += 0.15 * vshape_turn
+        conf = float(np.clip(conf, 0.0, 1.0))
         if abs(hpz) > HPZ_PENALTY:
             conf *= 0.75
 
+        # Entry
         if vol_trend_on and conf >= CONF_ENTER:
-            entry_counter += 1
-            exit_counter = 0
-            if entry_counter >= confirm_bars:
-                buy_signal = True
-        else:
-            entry_counter = 0
+            buy_signal = True
 
-        if in_position and (rsi > rsi_overbought or p < ema50):
-            exit_counter += 1
-            if exit_counter >= confirm_bars:
-                sell_signal = True
-        else:
-            exit_counter = 0
-
-    # ATR trailing stop
-    if use_atr_stop and "ATR" in latest and latest["ATR"] is not None:
-        if trailing_stop is None:
-            trailing_stop = p - atr_mult * latest["ATR"]
-        else:
-            trailing_stop = max(trailing_stop, p - atr_mult * latest["ATR"])
-        if p < trailing_stop:
+        # Exit
+        overbought_level = rsi_overbought_strongtrend if p > kama_ * (1 + strongtrend_sma_gap) else rsi_overbought
+        severe_noise = abs(hpz) > HPZ_SEVERE
+        regime_weak = (not vol_trend_on) and (p < ema100)
+        if in_position and (rsi > overbought_level or p < ema50 or severe_noise or regime_weak):
             sell_signal = True
+
+        # ATR stop
+        if use_atr_stop and "ATR" in latest and latest["ATR"] is not None:
+            if trailing_stop is None:
+                trailing_stop = p - atr_mult * latest["ATR"]
+            else:
+                trailing_stop = max(trailing_stop, p - atr_mult * latest["ATR"])
+            if p < trailing_stop:
+                sell_signal = True
 
     # =====================
     # Output
@@ -743,18 +546,215 @@ def filter_entry_signal(ticker, cfg):
     return {
         "Symbol": ticker,
         "Date": latest.name.strftime("%Y-%m-%d"),
-        "Price": round(p,2),
-        "RSI": round(rsi,2) if pd.notna(rsi) else None,
-        "EMA50": round(ema50,2),
-        "EMA100": round(ema100,2),
-        "KAMA": round(kama_,2),
-        "ZLEMA20": round(z20,2),
-        "HP_Z": round(hpz,2),
-        "VolRatio": round(volr,2),
-        "ATR": round(latest.get("ATR",0),2) if use_atr_stop else None,
+        "Price": round(p, 2),
+        "RSI": round(rsi, 2) if pd.notna(rsi) else None,
+        "EMA50": round(ema50, 2),
+        "EMA100": round(ema100, 2),
+        "KAMA": round(kama_, 2),
+        "ZLEMA20": round(z20, 2),
+        "HP_Z": round(hpz, 2),
+        "VolRatio": round(volr, 2),
+        "ATR": round(latest.get("ATR", 0), 2) if use_atr_stop else None,
         "Signal": signal,
         "Reason": reason
     }
+
+
+
+# def filter_entry_signal(ticker, cfg):
+#     time.sleep(1)  # avoid too rapid API calls
+#     end = datetime.today().strftime("%Y-%m-%d")
+#     start = "2023-01-01"
+
+#     # Download price data
+#     prices = yf.download([ticker], start=start, end=end, progress=False, auto_adjust=True)["Close"].dropna()
+#     if ticker not in prices.columns:
+#         return {"Symbol": ticker, "Error": "Data not available"}
+
+#     price = prices[ticker].to_frame(name="Price")
+
+#     # === Config variables ===
+#     sma_window = cfg["sma_window"]
+#     rsi_period = cfg["rsi_period"]
+#     rsi_overbought = cfg["rsi_overbought"]
+#     rsi_oversold = cfg["rsi_oversold"]
+#     strongtrend_sma_gap = 0.05
+#     use_atr_stop = cfg["use_atr_stop"]
+#     atr_period = cfg["atr_period"]
+#     atr_mult = cfg["atr_mult"]
+#     boom_threshold = cfg["boom_threshold"]
+#     confirm_bars = cfg.get("confirm_bars", 2)
+
+#     # =====================
+#     # Helper functions
+#     # =====================
+#     def compute_rsi(series, period=14):
+#         delta = series.diff()
+#         gain = delta.where(delta > 0, 0.0)
+#         loss = -delta.where(delta < 0, 0.0)
+#         avg_gain = gain.rolling(period, min_periods=1).mean()
+#         avg_loss = loss.rolling(period, min_periods=1).mean()
+#         rs = avg_gain / (avg_loss + 1e-12)
+#         rsi = 100 - (100 / (1 + rs))
+#         return rsi
+
+#     def zlema(series, span):
+#         lag = int(max(1, (span - 1) // 2))
+#         de_lagged = series + (series - series.shift(lag))
+#         return de_lagged.ewm(span=span, adjust=False).mean()
+
+#     def kama(series, er_window=10, fast=2, slow=30):
+#         change = (series - series.shift(er_window)).abs()
+#         volatility = series.diff().abs().rolling(er_window).sum()
+#         er = change / (volatility + 1e-12)
+#         fast_sc = 2 / (fast + 1)
+#         slow_sc = 2 / (slow + 1)
+#         sc = (er * (fast_sc - slow_sc) + slow_sc) ** 2
+#         kama_series = pd.Series(index=series.index, dtype=float)
+#         if len(series) < er_window + 2:
+#             return series.ewm(span=slow, adjust=False).mean()
+#         kama_series.iloc[er_window] = series.iloc[:er_window + 1].mean()
+#         for i in range(er_window + 1, len(series)):
+#             prev = kama_series.iloc[i - 1]
+#             kama_series.iloc[i] = prev + sc.iloc[i] * (series.iloc[i] - prev)
+#         return kama_series.ffill().bfill()
+
+#     # =====================
+#     # Indicators
+#     # =====================
+#     price["RSI"] = compute_rsi(price["Price"], rsi_period)
+#     price["EMA50"] = price["Price"].ewm(span=50, adjust=False).mean()
+#     price["EMA100"] = price["Price"].ewm(span=100, adjust=False).mean()
+#     price["KAMA"] = kama(price["Price"], er_window=10, fast=2, slow=max(20, sma_window // 8))
+#     price["ZLEMA20"] = zlema(price["Price"], 20)
+
+#     price["HP"] = price["Price"] - price["KAMA"]
+#     hp_std = price["HP"].rolling(50, min_periods=10).std()
+#     price["HP_Z"] = price["HP"] / hp_std
+
+#     # ATR
+#     if use_atr_stop:
+#         ohlc = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)[["High","Low","Close"]]
+#         hl = ohlc["High"] - ohlc["Low"]
+#         hp = (ohlc["High"] - ohlc["Close"].shift()).abs()
+#         lp = (ohlc["Low"] - ohlc["Close"].shift()).abs()
+#         tr = pd.concat([hl, hp, lp], axis=1).max(axis=1)
+#         price["ATR"] = tr.rolling(atr_period, min_periods=1).mean()
+
+#     # Boom detection
+#     boom_cfg = {
+#         "rsi_period": rsi_period,
+#         "sma_rsi_reclaim_sma": 50,
+#         "sma_rsi_min_slope_win": 15,
+#         "sma_rsi_min_slope": -0.04,
+#         "sma_rsi_rsi_limit": 70,
+#         "sma_rsi_above_sma_pct": 0.70
+#     }
+#     boom_quarters = predict_boom_sma_rsi1(price, boom_cfg)
+#     boom_quarters_set = {(q.year, q.quarter) for q, val in boom_quarters.items() if val}
+#     price["IsBoom"] = [(d.year,d.quarter) in boom_quarters_set for d in price.index]
+
+#     # =====================
+#     # Core logic with confirmation bars
+#     # =====================
+#     latest = price.iloc[-1]
+#     live_price = yf.Ticker(ticker).info.get("currentPrice")
+#     p = live_price if live_price else latest["Price"]
+#     rsi = latest["RSI"]
+#     ema50, ema100, kama_, z20, hpz, boom = (
+#         latest["EMA50"], latest["EMA100"], latest["KAMA"], latest["ZLEMA20"], latest["HP_Z"], latest["IsBoom"]
+#     )
+
+#     VR_ENTER, VR_EXIT = 0.9, 1.2
+#     HPZ_PENALTY, HPZ_SEVERE = 1.5, 3.0
+#     RSI_MID_LOW, RSI_MID_HIGH = 45, 60
+#     CONF_ENTER = 0.60
+
+#     buy_signal = False
+#     sell_signal = False
+#     trailing_stop = None
+#     in_position = True  # assume holding for exit logic
+
+#     # Simplified VolRatio
+#     volr = 1.0
+#     vol_trend_on = volr < 0.9
+#     entry_counter = 0
+#     exit_counter = 0
+
+#     if boom:
+#         if rsi < 90:
+#             entry_counter += 1
+#             exit_counter = 0
+#             if entry_counter >= confirm_bars:
+#                 buy_signal = True
+#         else:
+#             exit_counter += 1
+#             entry_counter = 0
+#             if exit_counter >= confirm_bars:
+#                 sell_signal = True
+#     else:
+#         trend_align = 1.0 if (ema50 > ema100 > kama_) else 0.0
+#         dist_norm = np.clip((p - kama_)/(0.05*kama_), -1.0, 1.0)
+#         rsi_mid = 1.0 if (RSI_MID_LOW <= rsi <= RSI_MID_HIGH) else 0.0
+#         rsi_reset = 1.0 if (rsi < rsi_oversold) else 0.0
+#         vshape_turn = 1.0 if (z20 > ema50 and rsi >= 40) else 0.0
+#         vol_inv = np.clip((1.5 - volr), 0.0, 1.0)
+#         conf = 0.30*trend_align + 0.20*dist_norm + 0.20*vol_inv + 0.15*rsi_mid + 0.15*rsi_reset + 0.15*vshape_turn
+#         conf = float(np.clip(conf,0.0,1.0))
+#         if abs(hpz) > HPZ_PENALTY:
+#             conf *= 0.75
+
+#         if vol_trend_on and conf >= CONF_ENTER:
+#             entry_counter += 1
+#             exit_counter = 0
+#             if entry_counter >= confirm_bars:
+#                 buy_signal = True
+#         else:
+#             entry_counter = 0
+
+#         if in_position and (rsi > rsi_overbought or p < ema50):
+#             exit_counter += 1
+#             if exit_counter >= confirm_bars:
+#                 sell_signal = True
+#         else:
+#             exit_counter = 0
+
+#     # ATR trailing stop
+#     if use_atr_stop and "ATR" in latest and latest["ATR"] is not None:
+#         if trailing_stop is None:
+#             trailing_stop = p - atr_mult * latest["ATR"]
+#         else:
+#             trailing_stop = max(trailing_stop, p - atr_mult * latest["ATR"])
+#         if p < trailing_stop:
+#             sell_signal = True
+
+#     # =====================
+#     # Output
+#     # =====================
+#     signal = "HOLD"
+#     reason = ""
+#     if buy_signal:
+#         signal = "BUY"
+#         reason = "Filter Buy Signal"
+#     elif sell_signal:
+#         signal = "SELL"
+#         reason = "Filter Sell Signal"
+
+#     return {
+#         "Symbol": ticker,
+#         "Date": latest.name.strftime("%Y-%m-%d"),
+#         "Price": round(p,2),
+#         "RSI": round(rsi,2) if pd.notna(rsi) else None,
+#         "EMA50": round(ema50,2),
+#         "EMA100": round(ema100,2),
+#         "KAMA": round(kama_,2),
+#         "ZLEMA20": round(z20,2),
+#         "HP_Z": round(hpz,2),
+#         "VolRatio": round(volr,2),
+#         "ATR": round(latest.get("ATR",0),2) if use_atr_stop else None,
+#         "Signal": signal,
+#         "Reason": reason
+#     }
 
 
 
@@ -832,6 +832,7 @@ if st.button("Generate Signals"):
     if not df_sim.empty:
         st.subheader(f"Signals — {sim_mode}")
         st.dataframe(df_sim.style.apply(highlight, axis=1), use_container_width=True)
+
 
 
 
